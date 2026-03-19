@@ -1,0 +1,13 @@
+verbose()
+describe("Executa sistema e verifica componentes")
+
+launch("C:\www\testly\testly\examples\login_app\target\release\login_app.exe")
+
+inspect()
+
+fill("Nome:", "admin")
+fill("Senha:", "123456")
+
+click("Button", "Avançar")
+
+inspect()

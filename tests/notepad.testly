@@ -1,0 +1,6 @@
+verbose()
+describe("Abre o Notepad e lista componentes")
+
+launch("notepad.exe")
+
+inspect()
