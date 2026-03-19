@@ -11,6 +11,9 @@ use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetWindowTextW};
 
 /// Known Delphi/VCL window class prefixes that often cause issues with
 /// UI Automation and respond better to raw Win32 messages.
+///
+/// To add support for a new Delphi control, append its class-name prefix here.
+/// Only the prefix is checked, so `"TEdit"` matches `"TEdit"`, `"TEdit2"`, etc.
 const DELPHI_CLASS_PREFIXES: &[&str] = &[
     "TForm",
     "TEdit",

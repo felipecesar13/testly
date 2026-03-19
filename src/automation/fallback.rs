@@ -155,6 +155,6 @@ impl AutomationManager {
             }
         }
 
-        Err(last_err.unwrap_or_else(|| "No automation strategies available".into()))
+        Err(last_err.unwrap_or_else(|| "All automation strategies failed".into()))
     }
 }

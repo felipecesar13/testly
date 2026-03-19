@@ -274,7 +274,7 @@ fn find_edit_after_label(children: &[ChildEntry], field_name: &str) -> Option<HW
     })?;
 
     // Return the first edit-class child that comes after the label.
-    children[label_idx + 1..]
+    children.get(label_idx + 1..)?
         .iter()
         .find(|c| is_edit_class(&c.class_name))
         .map(|c| c.hwnd)
