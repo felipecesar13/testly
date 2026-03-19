@@ -1,11 +1,26 @@
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
+use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Accessibility::*;
+
+const RPC_E_CHANGED_MODE: u32 = 0x80010106;
 
 pub fn init_com() -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
-        CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
+        // Use STA (Single-Threaded Apartment) for better compatibility with
+        // Delphi/VCL applications that use STA-based COM objects.
+        // MTA can cause cross-apartment marshaling failures (0x80040201)
+        // when interacting with STA-hosted accessibility providers.
+        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if hr.is_ok() {
+            return Ok(());
+        }
+        // RPC_E_CHANGED_MODE means COM was already initialized with a
+        // different threading model on this thread — COM is still usable.
+        if (hr.0 as u32) == RPC_E_CHANGED_MODE {
+            return Ok(());
+        }
+        hr.ok()?;
     }
     Ok(())
 }
@@ -18,12 +33,44 @@ pub fn create_automation() -> Result<IUIAutomation, Box<dyn std::error::Error>> 
     }
 }
 
+/// Attempts to get the root UI Automation element for a window handle,
+/// retrying on transient COM errors (e.g. Delphi/VCL apps that are slow
+/// to expose their accessibility providers).
+unsafe fn element_from_handle_with_retry(
+    automation: &IUIAutomation,
+    hwnd: HWND,
+    log: &mut dyn FnMut(&str),
+) -> Result<IUIAutomationElement, Box<dyn std::error::Error>> {
+    const MAX_ATTEMPTS: u32 = 3;
+    const RETRY_DELAY_MS: u64 = 500;
+
+    unsafe {
+        let mut last_err = None;
+        for attempt in 1..=MAX_ATTEMPTS {
+            match automation.ElementFromHandle(hwnd) {
+                Ok(el) => return Ok(el),
+                Err(e) => {
+                    if attempt < MAX_ATTEMPTS {
+                        log(&format!(
+                            "[WARN] ElementFromHandle attempt {}/{} failed: {}. Retrying...",
+                            attempt, MAX_ATTEMPTS, e.message()
+                        ));
+                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap().into())
+    }
+}
+
 pub fn list_components(hwnd: HWND, log: &mut dyn FnMut(&str)) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         init_com()?;
         let automation = create_automation()?;
 
-        let root = automation.ElementFromHandle(hwnd)?;
+        let root = element_from_handle_with_retry(&automation, hwnd, log)?;
         let condition = automation.RawViewCondition()?;
         let walker = automation.CreateTreeWalker(&condition)?;
 
@@ -49,7 +96,7 @@ pub fn find_and_click(
         init_com()?;
         let automation = create_automation()?;
 
-        let root = automation.ElementFromHandle(hwnd)?;
+        let root = element_from_handle_with_retry(&automation, hwnd, log)?;
 
         let target_type = control_type_from_str(control_type_str)
             .ok_or_else(|| format!("Unknown control type: {}", control_type_str))?;
@@ -110,7 +157,7 @@ pub fn find_and_fill(
         init_com()?;
         let automation = create_automation()?;
 
-        let root = automation.ElementFromHandle(hwnd)?;
+        let root = element_from_handle_with_retry(&automation, hwnd, log)?;
 
         // Search for Edit elements by name
         let type_cond = automation.CreatePropertyCondition(
