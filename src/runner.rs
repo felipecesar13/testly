@@ -195,6 +195,12 @@ fn run_single(test_file: TestFile) -> TestResult {
                     }
                 }
             }
+
+            Command::Wait(ms) => {
+                log_fn(&format!("> wait({})", ms));
+                std::thread::sleep(std::time::Duration::from_millis(*ms));
+                log_fn(&format!("[OK] Waited {}ms", ms));
+            }
         }
     }
 
