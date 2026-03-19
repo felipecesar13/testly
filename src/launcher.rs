@@ -27,7 +27,7 @@ pub fn launch_and_find_window_with_log(
 
         // Strategy 1: Match by PID
         if let Some(hwnd) = find_window_by_pid(pid) {
-            log(&format!("[testly] Window found (by PID) after {}ms", attempt * 500));
+            log(&format!("[testly] Window found (by PID {}) after {}ms", pid, attempt * 500));
             return Ok((child, hwnd));
         }
 
