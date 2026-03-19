@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use windows::Win32::Foundation::HWND;
 
-use crate::inspector;
+use crate::automation::fallback::AutomationManager;
 use crate::launcher;
 use crate::parser::{Command, TestFile};
 
@@ -60,6 +60,13 @@ fn run_single(test_file: TestFile) -> TestResult {
         log_fn(&format!("Description: {}", desc));
     }
 
+    // Create the fallback-aware automation manager with all built-in strategies.
+    let manager = AutomationManager::with_defaults();
+    log_fn(&format!(
+        "[automation] Available strategies: {:?}",
+        manager.strategy_names()
+    ));
+
     let mut current_hwnd: Option<HWND> = None;
     let mut _child_process: Option<std::process::Child> = None;
 
@@ -96,7 +103,7 @@ fn run_single(test_file: TestFile) -> TestResult {
                 log_fn("> inspect()");
                 match current_hwnd {
                     Some(hwnd) => {
-                        if let Err(e) = inspector::list_components(hwnd, &mut log_fn) {
+                        if let Err(e) = manager.list_components(hwnd, &mut log_fn) {
                             let msg = format!("[FAIL] Inspect failed: {}", e);
                             log_fn(&msg);
                             return TestResult {
@@ -132,7 +139,7 @@ fn run_single(test_file: TestFile) -> TestResult {
                         // Small delay to let UI settle
                         std::thread::sleep(std::time::Duration::from_millis(300));
 
-                        if let Err(e) = inspector::find_and_click(hwnd, control_type, name, &mut log_fn) {
+                        if let Err(e) = manager.find_and_click(hwnd, control_type, name, &mut log_fn) {
                             let msg = format!("[FAIL] Click failed: {}", e);
                             log_fn(&msg);
                             return TestResult {
@@ -167,7 +174,7 @@ fn run_single(test_file: TestFile) -> TestResult {
                     Some(hwnd) => {
                         std::thread::sleep(std::time::Duration::from_millis(300));
 
-                        if let Err(e) = inspector::find_and_fill(hwnd, name, value, &mut log_fn) {
+                        if let Err(e) = manager.find_and_fill(hwnd, name, value, &mut log_fn) {
                             let msg = format!("[FAIL] Fill failed: {}", e);
                             log_fn(&msg);
                             return TestResult {
