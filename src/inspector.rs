@@ -1,17 +1,19 @@
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
 use windows::Win32::UI::Accessibility::*;
 
 const RPC_E_CHANGED_MODE: u32 = 0x80010106;
 
 pub fn init_com() -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
-        // Use STA (Single-Threaded Apartment) for better compatibility with
-        // Delphi/VCL applications that use STA-based COM objects.
-        // MTA can cause cross-apartment marshaling failures (0x80040201)
-        // when interacting with STA-hosted accessibility providers.
-        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        // Use MTA (Multi-Threaded Apartment) — recommended by Microsoft for
+        // UI Automation client threads. MTA does not require a message pump
+        // and UI Automation handles cross-apartment marshaling internally
+        // when communicating with STA-based accessibility providers (e.g.
+        // Delphi/VCL apps). Using STA without a message pump can cause
+        // marshaled calls to hang or fail.
+        let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
         if hr.is_ok() {
             return Ok(());
         }
@@ -33,34 +35,87 @@ pub fn create_automation() -> Result<IUIAutomation, Box<dyn std::error::Error>> 
     }
 }
 
-/// Attempts to get the root UI Automation element for a window handle,
-/// retrying on transient COM errors (e.g. Delphi/VCL apps that are slow
-/// to expose their accessibility providers).
+/// Attempts to get the root UI Automation element for a window handle.
+///
+/// Two strategies are tried in order:
+///   1. `ElementFromHandle` — retried up to `MAX_ATTEMPTS` times with
+///      increasing back-off.
+///   2. Fallback via `GetRootElement` + `FindFirst` searching by the
+///      `NativeWindowHandle` property.  This code-path avoids the internal
+///      event-subscription machinery that some Delphi/VCL accessibility
+///      providers fail to handle (error 0x80040201).
 unsafe fn element_from_handle_with_retry(
     automation: &IUIAutomation,
     hwnd: HWND,
     log: &mut dyn FnMut(&str),
 ) -> Result<IUIAutomationElement, Box<dyn std::error::Error>> {
-    const MAX_ATTEMPTS: u32 = 3;
-    const RETRY_DELAY_MS: u64 = 500;
+    const MAX_ATTEMPTS: u32 = 10;
+    const BASE_DELAY_MS: u64 = 500;
 
     unsafe {
         let mut last_err = None;
+
+        // ── Strategy 1: ElementFromHandle with retry ───────────────────
         for attempt in 1..=MAX_ATTEMPTS {
             match automation.ElementFromHandle(hwnd) {
                 Ok(el) => return Ok(el),
                 Err(e) => {
+                    // Cap the multiplier at 4 so delay maxes at 2000ms.
+                    let delay = BASE_DELAY_MS * attempt.min(4) as u64;
                     if attempt < MAX_ATTEMPTS {
                         log(&format!(
-                            "[WARN] ElementFromHandle attempt {}/{} failed: {}. Retrying...",
-                            attempt, MAX_ATTEMPTS, e.message()
+                            "[WARN] ElementFromHandle attempt {}/{} failed: {}. Retrying in {}ms...",
+                            attempt, MAX_ATTEMPTS, e.message(), delay
                         ));
-                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+                        std::thread::sleep(std::time::Duration::from_millis(delay));
                     }
                     last_err = Some(e);
                 }
             }
         }
+
+        // ── Strategy 2: Fallback via root element search ───────────────
+        log("[INFO] ElementFromHandle exhausted retries. Trying fallback via GetRootElement...");
+
+        const FALLBACK_ATTEMPTS: u32 = 3;
+        const FALLBACK_DELAY_MS: u64 = 1000;
+
+        if let Ok(root) = automation.GetRootElement() {
+            if let Ok(cond) = automation.CreatePropertyCondition(
+                UIA_NativeWindowHandlePropertyId,
+                &windows::core::VARIANT::from(hwnd.0 as i32),
+            ) {
+                // Top-level windows are direct children of the desktop root,
+                // so search children first (fast).
+                for fb in 1..=FALLBACK_ATTEMPTS {
+                    match root.FindFirst(TreeScope_Children, &cond) {
+                        Ok(el) => {
+                            log("[INFO] Fallback succeeded: element found via GetRootElement.");
+                            return Ok(el);
+                        }
+                        Err(e) => {
+                            if fb < FALLBACK_ATTEMPTS {
+                                log(&format!(
+                                    "[WARN] Fallback attempt {}/{} failed: {}. Retrying...",
+                                    fb, FALLBACK_ATTEMPTS, e.message()
+                                ));
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    FALLBACK_DELAY_MS,
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                // Last resort: search descendants (slower but handles nested
+                // windows, e.g. owned/child windows).
+                if let Ok(el) = root.FindFirst(TreeScope_Descendants, &cond) {
+                    log("[INFO] Fallback succeeded: element found via descendant search.");
+                    return Ok(el);
+                }
+            }
+        }
+
         Err(last_err.unwrap().into())
     }
 }
