@@ -1,5 +1,6 @@
 #![allow(non_upper_case_globals)]
 
+mod automation;
 mod inspector;
 mod launcher;
 mod parser;
