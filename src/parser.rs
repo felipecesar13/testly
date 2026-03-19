@@ -9,6 +9,7 @@ pub enum Command {
     Inspect,
     Click(String, String),
     Fill(String, String),
+    Wait(u64),
 }
 
 #[derive(Debug)]
@@ -86,6 +87,10 @@ fn parse_line(line: &str) -> Option<Command> {
         return Some(Command::Fill(a, b));
     }
 
+    if let Some(ms) = extract_numeric_arg(line, "wait") {
+        return Some(Command::Wait(ms));
+    }
+
     None
 }
 
@@ -111,6 +116,15 @@ fn extract_two_args(line: &str, func: &str) -> Option<(String, String)> {
     }
 
     Some((unquote(parts[0].trim()), unquote(parts[1].trim())))
+}
+
+fn extract_numeric_arg(line: &str, func: &str) -> Option<u64> {
+    let prefix = format!("{}(", func);
+    if !line.starts_with(&prefix) || !line.ends_with(')') {
+        return None;
+    }
+    let inner = &line[prefix.len()..line.len() - 1];
+    inner.trim().parse::<u64>().ok()
 }
 
 fn unquote(s: &str) -> String {

@@ -10,4 +10,6 @@ fill("Senha:", "123456")
 
 click("Button", "Avançar")
 
+wait(2000)
+
 inspect()
