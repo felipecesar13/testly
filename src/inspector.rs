@@ -191,11 +191,15 @@ unsafe fn print_element(
 
         // Walk child elements
         if let Ok(child) = walker.GetFirstChildElement(element) {
-            print_element(&child, walker, depth + 1, counter, log)?;
+            if let Err(e) = print_element(&child, walker, depth + 1, counter, log) {
+                log(&format!("[WARN] Skipping element due to error: {}", e));
+            }
 
             let mut current = child;
             while let Ok(next) = walker.GetNextSiblingElement(&current) {
-                print_element(&next, walker, depth + 1, counter, log)?;
+                if let Err(e) = print_element(&next, walker, depth + 1, counter, log) {
+                    log(&format!("[WARN] Skipping element due to error: {}", e));
+                }
                 current = next;
             }
         }
